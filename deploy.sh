@@ -11,6 +11,7 @@ echo "=== Enterprise Deployment using Cloud Run Source Deploy ==="
 
 gcloud run deploy $SERVICE_NAME \
     --source ./api \
+    --port 8000 \
     --region $REGION \
     --project $PROJECT_ID \
     --cpu 1 \

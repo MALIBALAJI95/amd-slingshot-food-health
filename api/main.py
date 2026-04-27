@@ -1,35 +1,13 @@
 import os
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from intelligence import HybridIntelligence, PredictRequest
+import uvicorn
+from fastapi import FastAPI
 
-app = FastAPI(
-    title="NourishIQ Life-Sync API",
-    description="Agentic Nutrition Intelligence powered by Gemini & GCP",
-    version="3.1.0",
-)
+app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ... (your existing routes) ...
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    return JSONResponse(status_code=500, content={"error": str(exc)})
-
-@app.get("/")
-async def root():
-    return {"service": "NourishIQ Life-Sync API", "version": "3.1.0", "status": "healthy"}
-
-@app.post("/api/predict")
-async def predict(req: PredictRequest):
-    """Fully async agentic prediction — Gemini live with fail-safe fallback."""
-    try:
-        return await HybridIntelligence.predict(req)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+if __name__ == "__main__":
+    # Get port from environment or default to 8080
+    port = int(os.environ.get("PORT", 8080))
+    # MUST listen on 0.0.0.0 to be visible to Cloud Run
+    uvicorn.run(app, host="0.0.0.0", port=port)
