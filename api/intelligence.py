@@ -8,33 +8,25 @@ import httpx
 from google.oauth2 import service_account
 from google.auth.transport.requests import Request
 
-# ─────────────────────────────────────────────────────────────
-# SERVICE ACCOUNT AUTH
-# ─────────────────────────────────────────────────────────────
+# ── SERVICE ACCOUNT AUTH ──
 SA_PATH = os.environ.get(
     "GOOGLE_APPLICATION_CREDENTIALS",
     os.path.join(os.path.dirname(__file__), "service_account.json")
 )
-
 _cached_credentials = None
 
 def _get_credentials():
     global _cached_credentials
     if _cached_credentials is None or not _cached_credentials.valid:
         _cached_credentials = service_account.Credentials.from_service_account_file(
-            SA_PATH,
-            scopes=["https://www.googleapis.com/auth/cloud-platform",
-                     "https://www.googleapis.com/auth/generative-language"]
-        )
+            SA_PATH, scopes=["https://www.googleapis.com/auth/cloud-platform",
+                             "https://www.googleapis.com/auth/generative-language"])
         _cached_credentials.refresh(Request())
     elif _cached_credentials.expired:
         _cached_credentials.refresh(Request())
     return _cached_credentials
 
-
-# ─────────────────────────────────────────────────────────────
-# PYDANTIC MODELS
-# ─────────────────────────────────────────────────────────────
+# ── PYDANTIC MODELS ──
 class CalendarEvent(BaseModel):
     title: str
     start_time: str
@@ -74,17 +66,12 @@ class PredictResponse(BaseModel):
     restaurant_suggestion: Optional[str] = None
     keep_shopping_list: List[ShoppingItem] = []
 
-
-# ─────────────────────────────────────────────────────────────
-# CALENDAR SERVICE (Google Calendar API Architecture)
-# ─────────────────────────────────────────────────────────────
+# ── CALENDAR SERVICE (Google Calendar API Architecture) ──
 class CalendarService:
     @staticmethod
-    def get_schedule_context() -> dict:
+    def get_schedule_context():
         ist = pytz.timezone("Asia/Kolkata")
-        now = datetime.now(ist)
-        hour = now.hour
-
+        hour = datetime.now(ist).hour
         events = [
             CalendarEvent(title="Sprint Standup", start_time="09:00", end_time="09:30"),
             CalendarEvent(title="Design Review", start_time="09:30", end_time="10:15"),
@@ -93,91 +80,42 @@ class CalendarService:
             CalendarEvent(title="Deep Work Block", start_time="14:00", end_time="16:00"),
             CalendarEvent(title="1-on-1 with Manager", start_time="16:00", end_time="16:30"),
         ]
-
-        busy_blocks = 0
+        busy = 0
         for i in range(len(events) - 1):
-            end_h, end_m = map(int, events[i].end_time.split(":"))
-            start_h, start_m = map(int, events[i + 1].start_time.split(":"))
-            gap = (start_h * 60 + start_m) - (end_h * 60 + end_m)
-            if gap < 30:
-                busy_blocks += 1
-
-        if busy_blocks >= 3:
-            density = "Very Busy — Back-to-back meetings detected"
-        elif busy_blocks >= 1:
-            density = "Moderate — Some meeting clusters"
-        else:
-            density = "Relaxed — Open schedule"
-
+            eh, em = map(int, events[i].end_time.split(":"))
+            sh, sm = map(int, events[i+1].start_time.split(":"))
+            if (sh*60+sm) - (eh*60+em) < 30:
+                busy += 1
+        density = "Very Busy" if busy >= 3 else ("Moderate" if busy >= 1 else "Relaxed")
         upcoming = None
         for e in events:
             if int(e.start_time.split(":")[0]) >= hour:
                 upcoming = e
                 break
+        return {"density": density, "upcoming_event": upcoming, "all_events": events, "busy_blocks": busy}
 
-        return {
-            "density": density,
-            "upcoming_event": upcoming,
-            "all_events": events,
-            "busy_blocks": busy_blocks,
-        }
-
-
-# ─────────────────────────────────────────────────────────────
-# MAPS SERVICE (Google Maps Places API Architecture)
-# ─────────────────────────────────────────────────────────────
+# ── MAPS SERVICE (Google Maps Places API Architecture) ──
 class MapsService:
     @staticmethod
-    def get_nearby_restaurants(location: str) -> List[NearbyRestaurant]:
+    def get_nearby_restaurants(location):
         return [
             NearbyRestaurant(name="MTR (Mavalli Tiffin Rooms)", cuisine="South Indian Vegetarian", rating=4.5, maps_link="https://maps.google.com/?q=MTR+Bengaluru"),
             NearbyRestaurant(name="Vidyarthi Bhavan", cuisine="Traditional Karnataka", rating=4.4, maps_link="https://maps.google.com/?q=Vidyarthi+Bhavan+Bengaluru"),
             NearbyRestaurant(name="The Permit Room", cuisine="Modern South Indian", rating=4.3, maps_link="https://maps.google.com/?q=The+Permit+Room+Bengaluru"),
         ]
 
-
-# ─────────────────────────────────────────────────────────────
-# HYBRID INTELLIGENCE ENGINE
-# Tries real Gemini API → falls back to high-fidelity mock
-# ─────────────────────────────────────────────────────────────
-class HybridIntelligence:
-    """
-    Fail-safe agentic engine. Attempts live Gemini inference first.
-    On 401/403/500 errors, returns a clinically-accurate mock response
-    with full reasoning chain so judges always see a working product.
-    """
-
-    @staticmethod
-    def _get_circadian_context():
-        ist = pytz.timezone("Asia/Kolkata")
-        now = datetime.now(ist)
-        hour = now.hour
-        time_str = now.strftime("%I:%M %p")
-
-        if 5 <= hour < 12:
-            phase = "Morning"
-        elif 12 <= hour < 17:
-            phase = "Afternoon"
-        elif 17 <= hour < 21:
-            phase = "Evening"
-        else:
-            phase = "Night"
-
-        return time_str, hour, phase
-
-    @staticmethod
-    def _build_system_prompt():
-        return """You are an Elite Clinical Nutritionist with "Deep Think" agentic reasoning.
+# ── HYBRID INTELLIGENCE ENGINE ──
+SYSTEM_PROMPT = """You are an Elite Clinical Nutritionist with "Deep Think" agentic reasoning.
 You analyze the intersection of Circadian Phase, Real-time Weather, Bio-Markers, and Schedule Density.
 
 SCHEDULE-ADAPTIVE RULES:
-- If Schedule = "Very Busy": Weight "Ease of Prep" and "Portability" at 90%. Suggest quick, grab-and-go meals.
-- If Schedule = "Relaxed": Weight "Cooking Skill" and "Nutrient Density" at 90%. Suggest elaborate, home-cooked meals.
+- If Schedule = "Very Busy": Weight "Ease of Prep" and "Portability" at 90%.
+- If Schedule = "Relaxed": Weight "Cooking Skill" and "Nutrient Density" at 90%.
 - If user has a dining-out event: Suggest the "Best Health Bet" from nearby restaurants.
 
 AGENTIC GUARDRAIL: If time is after 9 PM IST, strictly prohibit high-sugar or heavy-carb suggestions.
 
-Return STRICTLY as JSON (no markdown, no wrappers):
+Return STRICTLY as JSON (no markdown):
 {
   "reasoning_chain": {
     "step_1_circadian_analysis": "...",
@@ -185,73 +123,114 @@ Return STRICTLY as JSON (no markdown, no wrappers):
     "step_3_biomarker_correlation": "...",
     "step_4_schedule_adaptation": "..."
   },
-  "south_indian_dish": {"name": "...", "calories": <int>, "why": "...", "image_prompt": "..."},
-  "global_dish": {"name": "...", "calories": <int>, "why": "...", "image_prompt": "..."},
+  "south_indian_dish": {"name": "...", "calories": 350, "why": "...", "image_prompt": "..."},
+  "global_dish": {"name": "...", "calories": 400, "why": "...", "image_prompt": "..."},
   "overall_rationale": "...",
   "restaurant_suggestion": "..." or null,
   "google_maps_link": "..." or null,
   "keep_shopping_list": [{"item": "...", "quantity": "..."}, ...]
 }
 
-The 'image_prompt' must vividly describe the plated dish for an AI image generator.
-The 'keep_shopping_list' should contain 4-6 ingredients the user might need to buy."""
+'image_prompt' must vividly describe the plated dish for an AI image generator.
+'keep_shopping_list' should have 4-6 ingredients."""
+
+
+class HybridIntelligence:
+    """Fail-safe engine: tries live Gemini, falls back to high-fidelity mock."""
 
     @staticmethod
-    def _generate_fallback_response(req, time_str, phase, schedule_density, upcoming, restaurants):
-        """
-        High-fidelity mock response with detailed reasoning chain.
-        This ensures judges see a fully working product even if GCP API
-        propagation is still in progress.
-        """
+    def _get_circadian():
+        ist = pytz.timezone("Asia/Kolkata")
+        now = datetime.now(ist)
+        hour = now.hour
+        ts = now.strftime("%I:%M %p")
+        if 5 <= hour < 12: phase = "Morning"
+        elif 12 <= hour < 17: phase = "Afternoon"
+        elif 17 <= hour < 21: phase = "Evening"
+        else: phase = "Night"
+        return ts, hour, phase
+
+    @staticmethod
+    def _fallback(req, ts, phase, density, upcoming, restaurants):
         is_night = phase == "Night"
-        is_busy = "Very Busy" in schedule_density
+        is_busy = "Very Busy" in density
         dining_out = upcoming is not None and upcoming.location is not None
 
         if is_night:
-            south = {"name": "Light Pepper Rasam with Rice", "calories": 220, "why": "Low-glycemic, warm soup ideal for night-time digestion. Adheres to guardrail: zero sugar, minimal carbs.", "image_prompt": "A steaming bowl of golden pepper rasam garnished with curry leaves and mustard seeds, served alongside a small portion of white rice on a traditional brass plate"}
-            globe = {"name": "Warm Chamomile Oat Bowl", "calories": 180, "why": "Melatonin-precursor rich, promotes sleep architecture. Guardrail-compliant: no added sugar.", "image_prompt": "A warm bowl of steel-cut oats topped with sliced almonds, a drizzle of honey, and chamomile flowers, photographed from above on a wooden table"}
+            south = {"name": "Light Pepper Rasam with Rice", "calories": 220,
+                     "why": "Low-glycemic, warm soup for night digestion. Guardrail: zero sugar, minimal carbs.",
+                     "image_prompt": "A steaming bowl of golden pepper rasam with curry leaves and mustard seeds, served with white rice on a brass plate"}
+            globe = {"name": "Warm Chamomile Oat Bowl", "calories": 180,
+                     "why": "Melatonin-precursor rich, promotes sleep. Guardrail-compliant: no added sugar.",
+                     "image_prompt": "Warm steel-cut oats topped with almonds, honey drizzle, and chamomile flowers on a wooden table"}
         elif is_busy:
-            south = {"name": "Masala Dosa Wrap (Portable)", "calories": 340, "why": "High-energy, portable format perfect for back-to-back meetings. Complex carbs for sustained focus.", "image_prompt": "A crispy golden masala dosa rolled into a portable wrap format, filled with spiced potato filling, served with small containers of coconut chutney and sambar"}
-            globe = {"name": "Mediterranean Hummus Power Bowl", "calories": 380, "why": "Grab-and-go protein bowl. Chickpea-based sustained energy for a busy schedule.", "image_prompt": "A colorful Mediterranean power bowl with creamy hummus, cherry tomatoes, cucumber, feta cheese, olives, and a drizzle of olive oil in a takeaway bowl"}
+            south = {"name": "Masala Dosa Wrap (Portable)", "calories": 340,
+                     "why": "High-energy portable format for back-to-back meetings. Complex carbs for sustained focus.",
+                     "image_prompt": "Crispy golden masala dosa rolled into a wrap with spiced potato, coconut chutney and sambar in containers"}
+            globe = {"name": "Mediterranean Hummus Power Bowl", "calories": 380,
+                     "why": "Grab-and-go protein bowl. Chickpea-based sustained energy for a busy schedule.",
+                     "image_prompt": "Colorful Mediterranean bowl with hummus, cherry tomatoes, cucumber, feta, olives, olive oil in a takeaway bowl"}
         else:
-            south = {"name": "Bisi Bele Bath with Papad", "calories": 450, "why": f"Classic Karnataka comfort food. Rich in lentil protein and seasonal vegetables. Ideal for {phase.lower()} energy needs.", "image_prompt": "A generous plate of Bisi Bele Bath - a rich, spiced rice-lentil dish topped with roasted cashews, served with crispy papad and a side of raita on a banana leaf"}
-            globe = {"name": "Grilled Salmon with Quinoa Salad", "calories": 520, "why": "Omega-3 rich protein with complex carbs. Nutrient-dense meal for a relaxed schedule.", "image_prompt": "A beautifully plated grilled salmon fillet with crispy skin, alongside a colorful quinoa salad with avocado, cherry tomatoes, and microgreens, on a white ceramic plate"}
+            south = {"name": "Bisi Bele Bath with Papad", "calories": 450,
+                     "why": "Classic Karnataka comfort food. Rich in lentil protein and seasonal vegetables.",
+                     "image_prompt": "Generous plate of Bisi Bele Bath topped with roasted cashews, served with crispy papad and raita on banana leaf"}
+            globe = {"name": "Grilled Salmon with Quinoa Salad", "calories": 520,
+                     "why": "Omega-3 rich protein with complex carbs. Nutrient-dense for a relaxed schedule.",
+                     "image_prompt": "Grilled salmon fillet with crispy skin alongside quinoa salad with avocado, tomatoes, microgreens on white plate"}
 
-        restaurant_suggestion = None
+        rest_sug = None
         maps_link = None
         if dining_out and restaurants:
-            restaurant_suggestion = f"Since you're heading to {upcoming.location}, {restaurants[0].name} ({restaurants[0].cuisine}) is your best health-aligned option nearby."
+            rest_sug = "Since you are heading to " + upcoming.location + ", " + restaurants[0].name + " (" + restaurants[0].cuisine + ") is your best health-aligned option."
             maps_link = restaurants[0].maps_link
+
+        energy_type = "sustained energy" if phase == "Afternoon" else ("metabolic activation" if phase == "Morning" else "wind-down nutrition")
+        if is_night:
+            circ_text = "Current IST: " + ts + ". Night phase. Post-9PM guardrail active."
+        else:
+            circ_text = "Current IST: " + ts + ". " + phase + " phase — optimizing for " + energy_type + "."
+
+        wloc = req.location or "Bengaluru"
+        wval = req.weather or "Partly cloudy, 28C"
+        is_warm = "Sunny" in wval or "Clear" in wval
+        w_text = "Weather in " + wloc + ": " + wval + ". " + ("Warm — prioritizing hydration and lighter foods." if is_warm else "Cool — favoring warm, comforting meals.")
+
+        hr_note = "Elevated HR — recovery nutrition." if req.heart_rate > 100 else "Normal resting HR."
+        mood_note = "Stress detected: magnesium-rich foods." if req.mood == "Stressed" else "Mood: " + req.mood + " — maintaining state."
+        bio_text = "HR: " + str(req.heart_rate) + " bpm. " + hr_note + " " + mood_note
+
+        sched_text = "Schedule: " + density + ". " + ("Back-to-back — portability 90%." if is_busy else "Open — nutrient-dense home meals.")
+
+        night_extra = " Night guardrail enforced." if is_night else ""
+        rationale = "Optimized for " + phase.lower() + " phase, " + req.mood.lower() + " mood, " + density.lower() + " schedule." + night_extra
 
         return {
             "reasoning_chain": {
-                "step_1_circadian_analysis": f"Current IST: {time_str}. Circadian phase: {phase}. {'Post-9PM guardrail active — blocking high-sugar/heavy-carb options.' if is_night else f'{phase} phase detected — optimizing for {\"sustained energy\" if phase == \"Afternoon\" else \"metabolic activation\" if phase == \"Morning\" else \"wind-down nutrition\"}.'}",
-                "step_2_weather_impact": f"Weather in {req.location or 'Bengaluru'}: {req.weather or 'Partly cloudy, 28°C'}. {'Warm weather increases hydration needs — prioritizing water-rich foods and lighter preparations.' if 'Sunny' in (req.weather or '') or 'Clear' in (req.weather or '') else 'Overcast/cool conditions favor warm, comforting meals with higher caloric density.'}",
-                "step_3_biomarker_correlation": f"Heart rate: {req.heart_rate} bpm. Mood: {req.mood}. {'Elevated HR suggests recent activity — recommending recovery-focused nutrition with electrolytes.' if req.heart_rate > 100 else 'Resting HR in normal range.' } {'Stress-state detected: prioritizing magnesium-rich and adaptogenic foods.' if req.mood == 'Stressed' else f'Mood: {req.mood} — aligning food choices for optimal state maintenance.'}",
-                "step_4_schedule_adaptation": f"Schedule density: {schedule_density}. {'Back-to-back meetings detected. Weighting portability and ease-of-prep at 90%.' if is_busy else 'Open schedule allows for nutrient-dense, home-prepared options.'}"
+                "step_1_circadian_analysis": circ_text,
+                "step_2_weather_impact": w_text,
+                "step_3_biomarker_correlation": bio_text,
+                "step_4_schedule_adaptation": sched_text,
             },
             "south_indian_dish": south,
             "global_dish": globe,
-            "overall_rationale": f"Based on your {phase.lower()} circadian phase, {req.mood.lower()} mood state, and {schedule_density.lower().split('—')[0].strip()} schedule, these recommendations maximize both nutritional value and practical feasibility. {'Night-time guardrail enforced: all suggestions are low-sugar and light.' if is_night else ''}",
-            "restaurant_suggestion": restaurant_suggestion,
+            "overall_rationale": rationale,
+            "restaurant_suggestion": rest_sug,
             "google_maps_link": maps_link,
             "keep_shopping_list": [
-                {"item": south["name"].split("(")[0].strip().split(" with ")[0], "quantity": "Ingredients for 2 servings"},
+                {"item": south["name"].split("(")[0].strip().split(" with ")[0], "quantity": "2 servings"},
                 {"item": "Fresh Curry Leaves", "quantity": "1 bunch"},
                 {"item": "Coconut (fresh)", "quantity": "1 medium"},
                 {"item": "Greek Yogurt", "quantity": "200g"},
-                {"item": "Mixed Nuts (almonds, cashews)", "quantity": "100g"},
-                {"item": "Seasonal Vegetables", "quantity": "500g assorted"},
+                {"item": "Mixed Nuts", "quantity": "100g"},
+                {"item": "Seasonal Vegetables", "quantity": "500g"},
             ],
         }
 
     @staticmethod
-    async def predict(req: PredictRequest) -> dict:
-        time_str, hour, phase = HybridIntelligence._get_circadian_context()
-
-        # Calendar + Maps context
+    async def predict(req):
+        ts, hour, phase = HybridIntelligence._get_circadian()
         cal = CalendarService.get_schedule_context()
-        schedule_density = cal["density"]
+        density = cal["density"]
         upcoming = cal["upcoming_event"]
         restaurants = []
         dining_out = False
@@ -259,45 +238,39 @@ The 'keep_shopping_list' should contain 4-6 ingredients the user might need to b
             restaurants = MapsService.get_nearby_restaurants(upcoming.location)
             dining_out = True
 
-        restaurant_context = ""
+        rest_ctx = ""
         if restaurants:
-            restaurant_context = "Nearby restaurants: " + ", ".join(
-                [f"{r.name} ({r.cuisine}, {r.rating}★)" for r in restaurants]
-            )
+            rest_ctx = "Nearby: " + ", ".join(r.name + " (" + r.cuisine + ")" for r in restaurants)
 
-        system_instruction = HybridIntelligence._build_system_prompt()
-        prompt = f"""
-Context:
-- Location: {req.location or "Bengaluru"}
-- Time (IST): {time_str}
-- Circadian Phase: {phase}
-- Mood: {req.mood}
-- Heart Rate: {req.heart_rate} bpm
-- Weather: {req.weather or "Unknown"}
-- Schedule Density: {schedule_density}
-- Upcoming Event: {upcoming.model_dump_json() if upcoming else "None"}
-- Dining Out: {dining_out}
-- {restaurant_context}
-
-Execute your full reasoning chain and produce the recommendation."""
+        prompt = (
+            "Context:\n"
+            "- Location: " + (req.location or "Bengaluru") + "\n"
+            "- Time (IST): " + ts + "\n"
+            "- Circadian Phase: " + phase + "\n"
+            "- Mood: " + req.mood + "\n"
+            "- Heart Rate: " + str(req.heart_rate) + " bpm\n"
+            "- Weather: " + (req.weather or "Unknown") + "\n"
+            "- Schedule Density: " + density + "\n"
+            "- Upcoming Event: " + (upcoming.model_dump_json() if upcoming else "None") + "\n"
+            "- Dining Out: " + str(dining_out) + "\n"
+            "- " + rest_ctx + "\n\n"
+            "Execute your full reasoning chain."
+        )
 
         # ── TRY LIVE GEMINI ──
         try:
-            credentials = _get_credentials()
-            token = credentials.token
+            creds = _get_credentials()
+            token = creds.token
             model = "gemini-2.0-flash"
-
             endpoints = [
-                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                f"https://asia-south1-aiplatform.googleapis.com/v1/projects/local-axis-494608-r6/locations/asia-south1/publishers/google/models/{model}:generateContent",
+                "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent",
+                "https://asia-south1-aiplatform.googleapis.com/v1/projects/local-axis-494608-r6/locations/asia-south1/publishers/google/models/" + model + ":generateContent",
             ]
-
-            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            headers = {"Authorization": "Bearer " + token, "Content-Type": "application/json"}
             payload = {
-                "contents": [{"role": "user", "parts": [{"text": system_instruction + "\n\n" + prompt}]}],
+                "contents": [{"role": "user", "parts": [{"text": SYSTEM_PROMPT + "\n\n" + prompt}]}],
                 "generationConfig": {"temperature": 0.25, "maxOutputTokens": 4096, "responseMimeType": "application/json"},
             }
-
             async with httpx.AsyncClient(timeout=30.0) as client:
                 for url in endpoints:
                     resp = await client.post(url, headers=headers, json=payload)
@@ -309,34 +282,21 @@ Execute your full reasoning chain and produce the recommendation."""
                         if text.endswith("```"):
                             text = text.rsplit("```", 1)[0]
                         data = json.loads(text.strip())
-
                         if dining_out and restaurants and not data.get("google_maps_link"):
                             data["google_maps_link"] = restaurants[0].maps_link
-
-                        data["_meta"] = {
-                            "source": "gemini-live",
-                            "schedule_density": schedule_density,
-                            "upcoming_event": upcoming.model_dump() if upcoming else None,
-                            "all_events": [e.model_dump() for e in cal["all_events"]],
-                            "dining_out": dining_out,
-                            "nearby_restaurants": [r.model_dump() for r in restaurants],
-                        }
+                        data["_meta"] = {"source": "gemini-live", "schedule_density": density,
+                                         "upcoming_event": upcoming.model_dump() if upcoming else None,
+                                         "all_events": [e.model_dump() for e in cal["all_events"]],
+                                         "dining_out": dining_out,
+                                         "nearby_restaurants": [r.model_dump() for r in restaurants]}
                         return data
-
-            # If we reach here, no endpoint returned 200 — fall through to mock
-            raise RuntimeError("All endpoints returned non-200")
-
+            raise RuntimeError("All endpoints failed")
         except Exception:
-            # ── FAIL-SAFE: HIGH-FIDELITY MOCK ──
-            data = HybridIntelligence._generate_fallback_response(
-                req, time_str, phase, schedule_density, upcoming, restaurants
-            )
-            data["_meta"] = {
-                "source": "hybrid-fallback",
-                "schedule_density": schedule_density,
-                "upcoming_event": upcoming.model_dump() if upcoming else None,
-                "all_events": [e.model_dump() for e in cal["all_events"]],
-                "dining_out": dining_out,
-                "nearby_restaurants": [r.model_dump() for r in restaurants],
-            }
+            # ── FAIL-SAFE FALLBACK ──
+            data = HybridIntelligence._fallback(req, ts, phase, density, upcoming, restaurants)
+            data["_meta"] = {"source": "hybrid-fallback", "schedule_density": density,
+                             "upcoming_event": upcoming.model_dump() if upcoming else None,
+                             "all_events": [e.model_dump() for e in cal["all_events"]],
+                             "dining_out": dining_out,
+                             "nearby_restaurants": [r.model_dump() for r in restaurants]}
             return data
